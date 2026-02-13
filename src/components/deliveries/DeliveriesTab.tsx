@@ -32,8 +32,8 @@ export function DeliveriesTab() {
   const [settings, setSettings] = useState<SystemSettings>({
     diasFuncionamento: [],
     feriados: [],
-    janelasAvulsas: ['manha', 'tarde'],
-    janelasAssinaturas: ['manha', 'tarde'],
+    janelasAvulsas: ['08:00-09:00', '09:00-10:00', '10:00-11:00', '11:00-12:00'],
+    janelasAssinaturas: ['08:00-09:00', '09:00-10:00', '10:00-11:00', '11:00-12:00'],
   });
   const [rescheduleTarget, setRescheduleTarget] = useState<DeliveryItem | null>(null);
   const [rescheduleLoading, setRescheduleLoading] = useState(false);
@@ -56,8 +56,8 @@ export function DeliveriesTab() {
       setSettings({
         diasFuncionamento: get('dias_funcionamento', ['segunda', 'terca', 'quarta', 'quinta', 'sexta']),
         feriados: get('feriados', []),
-        janelasAvulsas: get('janelas_horario_entregas_avulsas', ['manha', 'tarde']),
-        janelasAssinaturas: get('janelas_horario_entregas_assinaturas', ['manha', 'tarde']),
+        janelasAvulsas: get('janelas_horario_entregas_avulsas', ['08:00-09:00', '09:00-10:00', '10:00-11:00', '11:00-12:00']),
+        janelasAssinaturas: get('janelas_horario_entregas_assinaturas', ['08:00-09:00', '09:00-10:00', '10:00-11:00', '11:00-12:00']),
       });
     })();
   }, []);
@@ -108,7 +108,7 @@ export function DeliveriesTab() {
           products: (o.items || []).map((i: any) => ({ name: i.product?.name || 'Produto', quantity: i.quantity })),
           totalQuantity: (o.items || []).reduce((s: number, i: any) => s + i.quantity, 0),
           totalAmount: o.total_amount,
-          timeSlot: o.delivery_time_slot || 'manha',
+          timeSlot: o.delivery_time_slot || 'Sem horário',
           deliveryStatus: o.delivery_status as DeliveryStatus,
           notes: o.notes,
         });
@@ -136,7 +136,7 @@ export function DeliveriesTab() {
           products: (sub.items || []).map((i: any) => ({ name: i.product?.name || 'Produto', quantity: i.quantity })),
           totalQuantity: (sub.items || []).reduce((s: number, i: any) => s + i.quantity, 0),
           totalAmount: sd.total_amount,
-          timeSlot: sub.delivery_time_slot || 'manha',
+          timeSlot: sub.delivery_time_slot || 'Sem horário',
           deliveryStatus: sd.delivery_status as DeliveryStatus,
           notes: sd.notes,
         });
@@ -180,12 +180,7 @@ export function DeliveriesTab() {
       groups[slot].push(d);
     }
     // Sort slots
-    const order = ['manha', 'tarde', ...allTimeSlots];
-    return Object.entries(groups).sort(([a], [b]) => {
-      const ai = order.indexOf(a);
-      const bi = order.indexOf(b);
-      return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
-    });
+    return Object.entries(groups).sort(([a], [b]) => a.localeCompare(b));
   }, [filtered, allTimeSlots]);
 
   const slotLabel = (slot: string) => slot;
@@ -238,7 +233,7 @@ export function DeliveriesTab() {
       if (rescheduleTarget.sourceType === 'order') {
         const { error } = await supabase
           .from('orders')
-          .update({ delivery_date: newDate, delivery_time_slot: timeSlot as 'manha' | 'tarde' })
+          .update({ delivery_date: newDate, delivery_time_slot: timeSlot })
           .eq('id', rescheduleTarget.sourceId);
         if (error) throw error;
       } else {
