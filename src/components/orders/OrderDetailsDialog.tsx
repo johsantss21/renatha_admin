@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Loader2, XCircle, CreditCard, Wallet, RefreshCw } from 'lucide-react';
+import { Loader2, XCircle, CreditCard, Wallet, RefreshCw, Check, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { PaymentResult } from '@/components/payments/PaymentResult';
@@ -11,6 +11,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { supabase } from '@/integrations/supabase/client';
 import { Order, OrderItem, DeliveryStatus } from '@/types/database';
@@ -38,6 +39,13 @@ export function OrderDetailsDialog({ open, onOpenChange, order, onSuccess }: Ord
   const [checkingPayment, setCheckingPayment] = useState(false);
   const [isExpired, setIsExpired] = useState(false);
   const [reissuing, setReissuing] = useState(false);
+  const [needsDeliveryScheduling, setNeedsDeliveryScheduling] = useState(false);
+  const [selectedDeliverySlot, setSelectedDeliverySlot] = useState('');
+  const [updatingSlot, setUpdatingSlot] = useState(false);
+  const [deliveryTimeSlots, setDeliveryTimeSlots] = useState<string[]>([]);
+  const [horaLimite, setHoraLimite] = useState('12:00');
+  const [diasFuncionamento, setDiasFuncionamento] = useState<string[]>(['segunda', 'terca', 'quarta', 'quinta', 'sexta']);
+  const [feriados, setFeriados] = useState<string[]>([]);
 
   const checkPixPaymentStatus = useCallback(async () => {
     if (!order || paymentStatus !== 'pendente') return;
@@ -92,7 +100,15 @@ export function OrderDetailsDialog({ open, onOpenChange, order, onSuccess }: Ord
       setDeliveryStatus(order.delivery_status);
       setPaymentResult(null);
       setIsExpired(false);
+      setSelectedDeliverySlot('');
       fetchOrderItems();
+      fetchSystemSettings();
+
+      // Check if order is paid but has no delivery date → needs scheduling
+      const isPaid = order.payment_status === 'confirmado';
+      const hasNoDelivery = !order.delivery_date || !order.delivery_time_slot;
+      setNeedsDeliveryScheduling(isPaid && hasNoDelivery);
+
       if ((order as any).payment_url && order.payment_status === 'pendente') {
         setPaymentResult({
           method: (order.payment_method === 'pix' ? 'pix' : 'cartao'),
@@ -105,6 +121,73 @@ export function OrderDetailsDialog({ open, onOpenChange, order, onSuccess }: Ord
       }
     }
   }, [order, open]);
+
+  const fetchSystemSettings = async () => {
+    try {
+      const { data } = await supabase.from('system_settings').select('*');
+      if (!data) return;
+      const map = new Map(data.map(s => [s.key, s.value]));
+      const get = (key: string, def: any) => {
+        const v = map.get(key);
+        if (v == null) return def;
+        if (typeof v === 'string') { try { return JSON.parse(v); } catch { return v; } }
+        return v;
+      };
+      setDeliveryTimeSlots(get('janelas_horario_entregas_avulsas', ['08:00-09:00', '09:00-10:00', '10:00-11:00', '11:00-12:00']));
+      setHoraLimite(get('hora_limite_entrega_dia', '12:00'));
+      setDiasFuncionamento(get('dias_funcionamento', ['segunda', 'terca', 'quarta', 'quinta', 'sexta']));
+      setFeriados(get('feriados', []));
+    } catch (err) {
+      console.error('Error fetching settings:', err);
+    }
+  };
+
+  const calculateDeliveryDate = (): string => {
+    const now = new Date();
+    const [limitH, limitM] = (horaLimite || '12:00').split(':').map(Number);
+    const limitMinutes = limitH * 60 + (limitM || 0);
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    const weekdayMap: Record<number, string> = {
+      0: 'domingo', 1: 'segunda', 2: 'terca', 3: 'quarta', 4: 'quinta', 5: 'sexta', 6: 'sabado',
+    };
+
+    let deliveryDate = new Date(now);
+    if (currentMinutes > limitMinutes) {
+      deliveryDate.setDate(deliveryDate.getDate() + 1);
+    }
+
+    // Skip non-working days and holidays
+    const maxIter = 30;
+    for (let i = 0; i < maxIter; i++) {
+      const dayName = weekdayMap[deliveryDate.getDay()];
+      const dateStr = deliveryDate.toISOString().split('T')[0];
+      if (diasFuncionamento.includes(dayName) && !feriados.includes(dateStr)) break;
+      deliveryDate.setDate(deliveryDate.getDate() + 1);
+    }
+
+    return deliveryDate.toISOString().split('T')[0];
+  };
+
+  const handleConfirmDeliverySlot = async () => {
+    if (!order || !selectedDeliverySlot) return;
+    setUpdatingSlot(true);
+    try {
+      const deliveryDate = calculateDeliveryDate();
+      const { error } = await supabase.from('orders').update({
+        delivery_time_slot: selectedDeliverySlot,
+        delivery_date: deliveryDate,
+      }).eq('id', order.id);
+      if (error) throw error;
+
+      setNeedsDeliveryScheduling(false);
+      onSuccess();
+      toast({ title: 'Entrega agendada', description: `Janela ${selectedDeliverySlot} para ${new Date(deliveryDate + 'T12:00:00').toLocaleDateString('pt-BR')}.` });
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'Erro', description: err.message });
+    } finally {
+      setUpdatingSlot(false);
+    }
+  };
 
   useEffect(() => {
     if (!open || !order || paymentStatus !== 'pendente') return;
@@ -152,8 +235,6 @@ export function OrderDetailsDialog({ open, onOpenChange, order, onSuccess }: Ord
 
   const getTimeSlotLabel = (slot: string | null) => {
     if (!slot) return '—';
-    if (slot === 'manha') return '08:00–12:00';
-    if (slot === 'tarde') return '12:00–16:00';
     return slot;
   };
 
@@ -277,6 +358,47 @@ export function OrderDetailsDialog({ open, onOpenChange, order, onSuccess }: Ord
 
             {order.notes && (
               <div className="p-4 bg-muted/50 rounded-lg"><p className="text-sm text-muted-foreground mb-1">Observações</p><p>{order.notes}</p></div>
+            )}
+
+            {/* Delivery Scheduling Section - shown when paid but no delivery scheduled */}
+            {needsDeliveryScheduling && !isCancelled && (
+              <div className="space-y-4 p-4 border-2 border-primary/30 rounded-lg bg-primary/5">
+                <div className="flex items-center gap-2 mb-2">
+                  <Check className="h-5 w-5 text-green-600" />
+                  <p className="font-medium text-green-700 dark:text-green-400">Pagamento Confirmado!</p>
+                </div>
+                <p className="text-sm text-muted-foreground">Selecione a janela de horário para agendar a entrega.</p>
+
+                <Alert>
+                  <AlertTriangle className="h-4 w-4" />
+                  <AlertDescription>
+                    Pedidos com pagamento confirmado após as <strong>{horaLimite}</strong> serão agendados para o próximo dia útil.
+                  </AlertDescription>
+                </Alert>
+
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Data de entrega calculada: <strong>{new Date(calculateDeliveryDate() + 'T12:00:00').toLocaleDateString('pt-BR')}</strong></p>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {deliveryTimeSlots.map((slot) => (
+                    <Button
+                      key={slot}
+                      type="button"
+                      variant={selectedDeliverySlot === slot ? 'default' : 'outline'}
+                      className="h-12"
+                      onClick={() => setSelectedDeliverySlot(slot)}
+                    >
+                      {slot}
+                    </Button>
+                  ))}
+                </div>
+
+                <Button onClick={handleConfirmDeliverySlot} disabled={updatingSlot || !selectedDeliverySlot} className="w-full">
+                  {updatingSlot ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  Confirmar Entrega
+                </Button>
+              </div>
             )}
 
             {/* Check Payment Button */}

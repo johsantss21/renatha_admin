@@ -97,9 +97,7 @@ export function DeliveryCard({
 
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Clock className="h-4 w-4 shrink-0" />
-          <span>
-            {delivery.timeSlot === 'manha' ? 'Manhã' : delivery.timeSlot === 'tarde' ? 'Tarde' : delivery.timeSlot}
-          </span>
+          <span>{delivery.timeSlot}</span>
         </div>
 
         {/* Notes */}

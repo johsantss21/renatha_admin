@@ -101,7 +101,7 @@ export default function Orders() {
 
   const getTimeSlotLabel = (slot: string | null) => {
     if (!slot) return '—';
-    return slot === 'manha' ? 'Manhã' : 'Tarde';
+    return slot;
   };
 
   return (

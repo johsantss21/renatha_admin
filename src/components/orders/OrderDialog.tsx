@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Loader2, Plus, Trash2, Info, AlertTriangle, CreditCard, Wallet, RefreshCw, Check } from 'lucide-react';
+import { Loader2, Plus, Trash2, Info, AlertTriangle, CreditCard, Wallet, RefreshCw, Check, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -608,9 +608,20 @@ export function OrderDialog({ open, onOpenChange, onSuccess }: OrderDialogProps)
               <p className="text-sm text-muted-foreground">Agora selecione a janela de horário para entrega.</p>
             </div>
 
+            <Alert>
+              <AlertTriangle className="h-4 w-4" />
+              <AlertDescription>
+                Pedidos com pagamento confirmado após as <strong>{settings.hora_limite_entrega_dia}</strong> serão agendados para o próximo dia útil.
+              </AlertDescription>
+            </Alert>
+
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Data de entrega calculada: <strong>{new Date(calculateDeliveryDate() + 'T12:00:00').toLocaleDateString('pt-BR')}</strong></p>
+            </div>
+
             <div className="space-y-3">
               <label className="text-sm font-medium">Janela de Entrega</label>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 {getTimeSlots().map((slot) => (
                   <Button
                     key={slot}

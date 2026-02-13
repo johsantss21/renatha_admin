@@ -188,11 +188,7 @@ export function DeliveriesTab() {
     });
   }, [filtered, allTimeSlots]);
 
-  const slotLabel = (slot: string) => {
-    if (slot === 'manha') return '08:00–12:00';
-    if (slot === 'tarde') return '12:00–16:00';
-    return slot;
-  };
+  const slotLabel = (slot: string) => slot;
 
   // Actions
   const updateOrderDeliveryStatus = async (delivery: DeliveryItem, status: DeliveryStatus) => {
