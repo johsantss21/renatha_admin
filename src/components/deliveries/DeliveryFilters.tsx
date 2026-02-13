@@ -105,7 +105,7 @@ export function DeliveryFilters({
             <SelectItem value="all">Todas janelas</SelectItem>
             {timeSlots.map((slot) => (
               <SelectItem key={slot} value={slot}>
-                {slot === 'manha' ? 'Manhã' : slot === 'tarde' ? 'Tarde' : slot}
+                {slot}
               </SelectItem>
             ))}
           </SelectContent>
