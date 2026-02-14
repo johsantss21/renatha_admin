@@ -104,6 +104,13 @@ serve(async (req) => {
   const resource = pathParts[1];
 
   try {
+    // MCP routes: /api/mcp/health, /api/mcp/tools, /api/mcp/call, /api/mcp/events/publish
+    if (resource === "mcp") {
+      const mcpRoute = pathParts[2] || "";
+      const mcpSubRoute = pathParts[3] || "";
+      return handleMcp(req, mcpRoute, mcpSubRoute);
+    }
+
     switch (resource) {
       case "products":
         return handleProducts(req, url);
@@ -130,7 +137,11 @@ serve(async (req) => {
               "/api/orders",
               "/api/subscriptions",
               "/api/settings",
-              "/api/deliveries"
+              "/api/deliveries",
+              "/api/mcp/health",
+              "/api/mcp/tools",
+              "/api/mcp/call",
+              "/api/mcp/events/publish"
             ]
           }),
           { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -850,4 +861,311 @@ async function handleDeliveries(req: Request, url: URL) {
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
+}
+
+// ============================================
+// MCP TOOLS REGISTRY
+// ============================================
+const MCP_TOOLS_REGISTRY = [
+  { name: "lovable.customers.getByPhone", description: "Buscar cliente por telefone", args: { phone: "string (obrigatório)" } },
+  { name: "lovable.customers.getByCpfCnpj", description: "Buscar cliente por CPF/CNPJ", args: { cpf_cnpj: "string (obrigatório)" } },
+  { name: "lovable.customers.create", description: "Criar novo cliente", args: { payload: "object (name, cpf_cnpj, phone obrigatórios)" } },
+  { name: "lovable.customers.update", description: "Atualizar cliente", args: { id: "string?", cpf_cnpj: "string?", payload: "object" } },
+  { name: "lovable.products.list", description: "Listar produtos", args: { include_inactive: "boolean?" } },
+  { name: "lovable.products.getByCode", description: "Buscar produto por código", args: { code: "string (obrigatório)" } },
+  { name: "lovable.products.create", description: "Criar produto", args: { payload: "object (name obrigatório)" } },
+  { name: "lovable.products.update", description: "Atualizar produto", args: { id: "string?", code: "string?", payload: "object" } },
+  { name: "lovable.products.lowStock", description: "Produtos com estoque baixo", args: {} },
+  { name: "lovable.orders.create", description: "Criar pedido", args: { payload: "object" } },
+  { name: "lovable.orders.get", description: "Consultar pedidos", args: { id: "string?", order_number: "string?", customer_id: "string?" } },
+  { name: "lovable.orders.cancel", description: "Cancelar pedido", args: { id: "string?", order_number: "string?", reason: "string (obrigatório)" } },
+  { name: "lovable.deliveries.getByDate", description: "Entregas por data", args: { date: "string YYYY-MM-DD (obrigatório)" } },
+  { name: "lovable.subscriptions.create", description: "Criar assinatura", args: { payload: "object" } },
+  { name: "lovable.subscriptions.get", description: "Consultar assinaturas", args: { id: "string?", subscription_number: "string?", customer_id: "string?" } },
+  { name: "lovable.subscriptions.update", description: "Atualizar assinatura", args: { id: "string?", subscription_number: "string?", payload: "object" } },
+  { name: "lovable.subscriptions.cancel", description: "Cancelar assinatura", args: { id: "string?", subscription_number: "string?", reason: "string (obrigatório)" } },
+  { name: "lovable.settings.get", description: "Consultar configurações", args: { key: "string?" } },
+  { name: "lovable.settings.set", description: "Definir configuração", args: { key: "string (obrigatório)", value: "any", description: "string?" } },
+];
+
+// In-memory rate limiter for MCP
+const mcpRateBuckets = new Map<string, { count: number; resetAt: number }>();
+function mcpCheckRateLimit(ip: string, limit: number): boolean {
+  const now = Date.now();
+  const bucket = mcpRateBuckets.get(ip);
+  if (!bucket || now > bucket.resetAt) {
+    mcpRateBuckets.set(ip, { count: 1, resetAt: now + 60000 });
+    return true;
+  }
+  bucket.count++;
+  return bucket.count <= limit;
+}
+
+function getMcpClientIp(req: Request): string {
+  return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("cf-connecting-ip") || "unknown";
+}
+
+// ============================================
+// MCP HANDLER (all routes under /api/mcp/*)
+// ============================================
+async function handleMcp(req: Request, route: string, subRoute: string) {
+  const ip = getMcpClientIp(req);
+
+  // Health doesn't require mcp_enabled check (to allow diagnostics)
+  if (route === "health") {
+    const { data: enabledRow } = await supabase.from("system_settings").select("value").eq("key", "mcp_enabled").maybeSingle();
+    let mcpEnabled = true;
+    if (enabledRow) {
+      const v = enabledRow.value;
+      mcpEnabled = v === true || v === "true";
+    }
+    return new Response(
+      JSON.stringify({ ok: mcpEnabled, timestamp: new Date().toISOString(), version: "mcp-v1" }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  // Fetch MCP settings
+  const { data: mcpSettings } = await supabase.from("system_settings").select("key, value")
+    .in("key", ["mcp_enabled", "mcp_allowlist_tools", "mcp_rate_limit_per_minute"]);
+  const settingsMap = new Map<string, any>();
+  for (const row of mcpSettings || []) {
+    let v = row.value;
+    if (typeof v === "string") { try { v = JSON.parse(v); } catch {} }
+    settingsMap.set(row.key, v);
+  }
+
+  const mcpEnabled = settingsMap.get("mcp_enabled");
+  if (mcpEnabled === false || mcpEnabled === "false") {
+    return new Response(
+      JSON.stringify({ ok: false, error: "MCP desativado" }),
+      { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  // Rate limit
+  const rateLimit = Number(settingsMap.get("mcp_rate_limit_per_minute")) || 60;
+  if (!mcpCheckRateLimit(ip, rateLimit)) {
+    return new Response(
+      JSON.stringify({ ok: false, error: "Rate limit excedido" }),
+      { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  // GET /api/mcp/tools
+  if (route === "tools" && req.method === "GET") {
+    const allowlist: string[] = settingsMap.get("mcp_allowlist_tools") || MCP_TOOLS_REGISTRY.map(t => t.name);
+    const filtered = MCP_TOOLS_REGISTRY.filter(t => allowlist.includes(t.name));
+    return new Response(
+      JSON.stringify({ ok: true, tools: filtered }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  // POST /api/mcp/call
+  if (route === "call" && req.method === "POST") {
+    const body = await req.json();
+    const { tool, args = {}, trace_id } = body;
+    const traceId = trace_id || crypto.randomUUID();
+
+    if (!tool) {
+      return new Response(
+        JSON.stringify({ ok: false, error: "Campo 'tool' é obrigatório" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Check allowlist
+    const allowlist: string[] = settingsMap.get("mcp_allowlist_tools") || MCP_TOOLS_REGISTRY.map(t => t.name);
+    if (!allowlist.includes(tool)) {
+      await supabase.from("mcp_audit_logs").insert({
+        env: "prod", actor: "n8n", tool, trace_id: traceId, request: body, response: null, ok: false, error_message: "Tool não permitida na allowlist", ip,
+      }).catch(() => {});
+      return new Response(
+        JSON.stringify({ ok: false, error: `Tool '${tool}' não está na allowlist` }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    try {
+      const result = await executeMcpTool(tool, args);
+      await supabase.from("mcp_audit_logs").insert({
+        env: "prod", actor: "n8n", tool, trace_id: traceId, request: body, response: result, ok: true, error_message: null, ip,
+      }).catch(() => {});
+      return new Response(
+        JSON.stringify({ ok: true, trace_id: traceId, result }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    } catch (err: any) {
+      await supabase.from("mcp_audit_logs").insert({
+        env: "prod", actor: "n8n", tool, trace_id: traceId, request: body, response: null, ok: false, error_message: err.message, ip,
+      }).catch(() => {});
+      return new Response(
+        JSON.stringify({ ok: false, trace_id: traceId, error: err.message }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+  }
+
+  // POST /api/mcp/events/publish
+  if (route === "events" && subRoute === "publish" && req.method === "POST") {
+    const body = await req.json();
+    const { type, payload, trace_id } = body;
+    const traceId = trace_id || crypto.randomUUID();
+
+    await supabase.from("mcp_audit_logs").insert({
+      env: "prod", actor: "n8n", tool: `event:${type || "unknown"}`, trace_id: traceId, request: body, response: { received: true }, ok: true, error_message: null, ip,
+    }).catch(() => {});
+
+    return new Response(
+      JSON.stringify({ ok: true, trace_id: traceId }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  return new Response(
+    JSON.stringify({ error: "MCP route not found", available: ["/api/mcp/health", "/api/mcp/tools", "/api/mcp/call", "/api/mcp/events/publish"] }),
+    { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
+
+// ============================================
+// MCP TOOL EXECUTOR (direct DB access, no HTTP loop)
+// ============================================
+async function executeMcpTool(toolName: string, args: any): Promise<any> {
+  switch (toolName) {
+    case "lovable.products.list": {
+      let query = supabase.from("products").select("*");
+      if (!args.include_inactive) query = query.eq("active", true);
+      const { data, error } = await query.order("name");
+      if (error) throw error;
+      return { success: true, data };
+    }
+    case "lovable.products.getByCode": {
+      const { data, error } = await supabase.from("products").select("*").eq("code", args.code);
+      if (error) throw error;
+      return { success: true, data };
+    }
+    case "lovable.products.create": {
+      const p = args.payload || args;
+      const { data, error } = await supabase.from("products").insert({ name: p.name, description: p.description || null, images: p.images || [], price_single: p.price_single || 0, price_kit: p.price_kit || 0, price_subscription: p.price_subscription || 0, stock: p.stock || 0, stock_min: p.stock_min || 0, stock_max: p.stock_max || 0, active: p.active !== false }).select().single();
+      if (error) throw error;
+      return { success: true, data };
+    }
+    case "lovable.products.update": {
+      const p = args.payload || {};
+      let query = supabase.from("products").update(p);
+      if (args.id) query = query.eq("id", args.id);
+      else if (args.code) query = query.eq("code", args.code);
+      const { data, error } = await query.select().single();
+      if (error) throw error;
+      return { success: true, data };
+    }
+    case "lovable.products.lowStock": {
+      const { data, error } = await supabase.from("products").select("*").eq("active", true);
+      if (error) throw error;
+      const low = (data || []).filter((p: any) => p.stock <= p.stock_min && p.stock_min > 0);
+      return { success: true, count: low.length, data: low };
+    }
+    case "lovable.customers.getByPhone": {
+      const { data, error } = await supabase.from("customers").select("*").eq("phone", (args.phone || "").replace(/\D/g, ""));
+      if (error) throw error;
+      return { success: true, data };
+    }
+    case "lovable.customers.getByCpfCnpj": {
+      const { data, error } = await supabase.from("customers").select("*").eq("cpf_cnpj", (args.cpf_cnpj || "").replace(/\D/g, ""));
+      if (error) throw error;
+      return { success: true, data };
+    }
+    case "lovable.customers.create": {
+      const c = args.payload || args;
+      const { data, error } = await supabase.from("customers").insert({ name: c.name, cpf_cnpj: (c.cpf_cnpj || "").replace(/\D/g, ""), phone: (c.phone || "").replace(/\D/g, ""), email: c.email || null, customer_type: c.customer_type || ((c.cpf_cnpj || "").replace(/\D/g, "").length === 14 ? "PJ" : "PF"), street: c.street || null, number: c.number || null, complement: c.complement || null, neighborhood: c.neighborhood || null, city: c.city || null, state: c.state || null, zip_code: c.zip_code || null }).select().single();
+      if (error) throw error;
+      return { success: true, data };
+    }
+    case "lovable.customers.update": {
+      const c = args.payload || {};
+      let query = supabase.from("customers").update(c);
+      if (args.id) query = query.eq("id", args.id);
+      else if (args.cpf_cnpj) query = query.eq("cpf_cnpj", (args.cpf_cnpj || "").replace(/\D/g, ""));
+      const { data, error } = await query.select().single();
+      if (error) throw error;
+      return { success: true, data };
+    }
+    case "lovable.orders.get": {
+      let query = supabase.from("orders").select("*, customer:customers(*), items:order_items(*, product:products(*))");
+      if (args.id) query = query.eq("id", args.id);
+      if (args.order_number) query = query.eq("order_number", args.order_number);
+      if (args.customer_id) query = query.eq("customer_id", args.customer_id);
+      const { data, error } = await query.order("created_at", { ascending: false });
+      if (error) throw error;
+      return { success: true, data };
+    }
+    case "lovable.orders.create": {
+      const o = args.payload || args;
+      const { data, error } = await supabase.from("orders").insert({ customer_id: o.customer_id, payment_method: o.payment_method, notes: o.notes, total_amount: o.total_amount || 0 }).select().single();
+      if (error) throw error;
+      return { success: true, data };
+    }
+    case "lovable.orders.cancel": {
+      let query = supabase.from("orders").update({ payment_status: "cancelado", delivery_status: "cancelado", cancelled_at: new Date().toISOString(), cancellation_reason: args.reason || null });
+      if (args.id) query = query.eq("id", args.id);
+      else if (args.order_number) query = query.eq("order_number", args.order_number);
+      const { data, error } = await query.select().single();
+      if (error) throw error;
+      return { success: true, data };
+    }
+    case "lovable.deliveries.getByDate": {
+      const date = args.date || new Date().toISOString().split("T")[0];
+      const { data: orders } = await supabase.from("orders").select("*, customer:customers(*), items:order_items(*, product:products(*))").eq("delivery_date", date).neq("payment_status", "cancelado");
+      const { data: subDel } = await supabase.from("subscription_deliveries").select("*, subscription:subscriptions(*, customer:customers(*), items:subscription_items(*, product:products(*)))").eq("delivery_date", date);
+      return { success: true, orders: orders || [], subscription_deliveries: subDel || [] };
+    }
+    case "lovable.subscriptions.get": {
+      let query = supabase.from("subscriptions").select("*, customer:customers(*), items:subscription_items(*, product:products(*))");
+      if (args.id) query = query.eq("id", args.id);
+      if (args.subscription_number) query = query.eq("subscription_number", args.subscription_number);
+      if (args.customer_id) query = query.eq("customer_id", args.customer_id);
+      const { data, error } = await query.order("created_at", { ascending: false });
+      if (error) throw error;
+      return { success: true, data };
+    }
+    case "lovable.subscriptions.create": {
+      const s = args.payload || args;
+      const { data, error } = await supabase.from("subscriptions").insert({ customer_id: s.customer_id, delivery_weekday: s.delivery_weekday, delivery_time_slot: s.delivery_time_slot || "manha", frequency: s.frequency, notes: s.notes, total_amount: s.total_amount || 0, is_emergency: s.is_emergency || false, delivery_weekdays: s.delivery_weekdays || null }).select().single();
+      if (error) throw error;
+      return { success: true, data };
+    }
+    case "lovable.subscriptions.update": {
+      const s = args.payload || {};
+      let query = supabase.from("subscriptions").update(s);
+      if (args.id) query = query.eq("id", args.id);
+      else if (args.subscription_number) query = query.eq("subscription_number", args.subscription_number);
+      const { data, error } = await query.select().single();
+      if (error) throw error;
+      return { success: true, data };
+    }
+    case "lovable.subscriptions.cancel": {
+      let query = supabase.from("subscriptions").update({ status: "cancelada", notes: args.reason || "Cancelada via MCP" });
+      if (args.id) query = query.eq("id", args.id);
+      else if (args.subscription_number) query = query.eq("subscription_number", args.subscription_number);
+      const { data, error } = await query.select().single();
+      if (error) throw error;
+      return { success: true, data };
+    }
+    case "lovable.settings.get": {
+      let query = supabase.from("system_settings").select("*");
+      if (args.key) query = query.eq("key", args.key);
+      const { data, error } = await query;
+      if (error) throw error;
+      return { success: true, data };
+    }
+    case "lovable.settings.set": {
+      const { data, error } = await supabase.from("system_settings").upsert({ key: args.key, value: args.value, description: args.description || null }, { onConflict: "key" }).select().single();
+      if (error) throw error;
+      return { success: true, data };
+    }
+    default:
+      throw new Error(`Tool desconhecida: ${toolName}`);
+  }
 }
