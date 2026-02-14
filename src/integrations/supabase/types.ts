@@ -128,6 +128,48 @@ export type Database = {
         }
         Relationships: []
       }
+      mcp_audit_logs: {
+        Row: {
+          actor: string
+          created_at: string
+          env: string
+          error_message: string | null
+          id: string
+          ip: string | null
+          ok: boolean
+          request: Json | null
+          response: Json | null
+          tool: string
+          trace_id: string | null
+        }
+        Insert: {
+          actor?: string
+          created_at?: string
+          env?: string
+          error_message?: string | null
+          id?: string
+          ip?: string | null
+          ok?: boolean
+          request?: Json | null
+          response?: Json | null
+          tool: string
+          trace_id?: string | null
+        }
+        Update: {
+          actor?: string
+          created_at?: string
+          env?: string
+          error_message?: string | null
+          id?: string
+          ip?: string | null
+          ok?: boolean
+          request?: Json | null
+          response?: Json | null
+          tool?: string
+          trace_id?: string | null
+        }
+        Relationships: []
+      }
       operator_profiles: {
         Row: {
           city: string | null

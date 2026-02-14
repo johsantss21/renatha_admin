@@ -5,6 +5,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AdminLayout } from '@/components/layout/AdminLayout';
 import { supabase } from '@/integrations/supabase/client';
 import { DeliveriesTab } from '@/components/deliveries/DeliveriesTab';
+import { DashboardKPIs } from '@/components/dashboard/DashboardKPIs';
 
 interface DashboardStats {
   totalProducts: number;
@@ -50,7 +51,6 @@ export default function Dashboard() {
         supabase.from('subscriptions').select('*', { count: 'exact', head: true }).eq('status', 'ativa'),
       ]);
 
-      // Calculate low stock products by comparing stock to stock_min
       const { data: productsData } = await supabase
         .from('products')
         .select('stock, stock_min')
@@ -75,55 +75,16 @@ export default function Dashboard() {
   };
 
   const statCards = [
-    {
-      title: 'Produtos Ativos',
-      value: stats.totalProducts,
-      icon: Package,
-      color: 'text-blue-600',
-      bgColor: 'bg-blue-100 dark:bg-blue-900/30',
-    },
-    {
-      title: 'Clientes',
-      value: stats.totalCustomers,
-      icon: Users,
-      color: 'text-green-600',
-      bgColor: 'bg-green-100 dark:bg-green-900/30',
-    },
-    {
-      title: 'Pedidos',
-      value: stats.totalOrders,
-      icon: ShoppingCart,
-      color: 'text-purple-600',
-      bgColor: 'bg-purple-100 dark:bg-purple-900/30',
-    },
-    {
-      title: 'Assinaturas',
-      value: stats.totalSubscriptions,
-      icon: RefreshCw,
-      color: 'text-orange-600',
-      bgColor: 'bg-orange-100 dark:bg-orange-900/30',
-    },
+    { title: 'Produtos Ativos', value: stats.totalProducts, icon: Package, color: 'text-blue-600', bgColor: 'bg-blue-100 dark:bg-blue-900/30' },
+    { title: 'Clientes', value: stats.totalCustomers, icon: Users, color: 'text-green-600', bgColor: 'bg-green-100 dark:bg-green-900/30' },
+    { title: 'Pedidos', value: stats.totalOrders, icon: ShoppingCart, color: 'text-purple-600', bgColor: 'bg-purple-100 dark:bg-purple-900/30' },
+    { title: 'Assinaturas', value: stats.totalSubscriptions, icon: RefreshCw, color: 'text-orange-600', bgColor: 'bg-orange-100 dark:bg-orange-900/30' },
   ];
 
   const alertCards = [
-    {
-      title: 'Pedidos Pendentes',
-      value: stats.pendingOrders,
-      icon: TrendingUp,
-      description: 'Aguardando confirmação de pagamento',
-    },
-    {
-      title: 'Assinaturas Ativas',
-      value: stats.activeSubscriptions,
-      icon: RefreshCw,
-      description: 'Entregas recorrentes programadas',
-    },
-    {
-      title: 'Estoque Baixo',
-      value: stats.lowStockProducts,
-      icon: AlertCircle,
-      description: 'Produtos abaixo do estoque mínimo',
-    },
+    { title: 'Pedidos Pendentes', value: stats.pendingOrders, icon: TrendingUp, description: 'Aguardando confirmação de pagamento' },
+    { title: 'Assinaturas Ativas', value: stats.activeSubscriptions, icon: RefreshCw, description: 'Entregas recorrentes programadas' },
+    { title: 'Estoque Baixo', value: stats.lowStockProducts, icon: AlertCircle, description: 'Produtos abaixo do estoque mínimo' },
   ];
 
   if (loading) {
@@ -147,6 +108,10 @@ export default function Dashboard() {
         <Tabs defaultValue="overview" className="space-y-6">
           <TabsList>
             <TabsTrigger value="overview">Visão Geral</TabsTrigger>
+            <TabsTrigger value="kpis" className="gap-1.5">
+              <TrendingUp className="h-4 w-4" />
+              Indicadores
+            </TabsTrigger>
             <TabsTrigger value="deliveries" className="gap-1.5">
               <Truck className="h-4 w-4" />
               Entregas
@@ -154,7 +119,6 @@ export default function Dashboard() {
           </TabsList>
 
           <TabsContent value="overview" className="space-y-8">
-            {/* Stats Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {statCards.map((card) => {
                 const Icon = card.icon;
@@ -176,7 +140,6 @@ export default function Dashboard() {
               })}
             </div>
 
-            {/* Alert Cards */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {alertCards.map((card) => {
                 const Icon = card.icon;
@@ -196,6 +159,10 @@ export default function Dashboard() {
                 );
               })}
             </div>
+          </TabsContent>
+
+          <TabsContent value="kpis">
+            <DashboardKPIs />
           </TabsContent>
 
           <TabsContent value="deliveries">

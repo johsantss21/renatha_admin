@@ -6,6 +6,7 @@ import { useToast } from '@/hooks/use-toast';
 import { DeliveryFilters } from './DeliveryFilters';
 import { DeliveryCard, DeliveryItem } from './DeliveryCard';
 import { RescheduleDialog } from './RescheduleDialog';
+import { DeliveryReportDialog } from './DeliveryReportDialog';
 import { DeliveryStatus } from '@/types/database';
 
 interface SystemSettings {
@@ -256,19 +257,22 @@ export function DeliveriesTab() {
 
   return (
     <div className="space-y-6">
-      <DeliveryFilters
-        date={date}
-        onDateChange={setDate}
-        search={search}
-        onSearchChange={setSearch}
-        typeFilter={typeFilter}
-        onTypeFilterChange={setTypeFilter}
-        statusFilter={statusFilter}
-        onStatusFilterChange={setStatusFilter}
-        timeSlotFilter={timeSlotFilter}
-        onTimeSlotFilterChange={setTimeSlotFilter}
-        timeSlots={allTimeSlots}
-      />
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <DeliveryFilters
+          date={date}
+          onDateChange={setDate}
+          search={search}
+          onSearchChange={setSearch}
+          typeFilter={typeFilter}
+          onTypeFilterChange={setTypeFilter}
+          statusFilter={statusFilter}
+          onStatusFilterChange={setStatusFilter}
+          timeSlotFilter={timeSlotFilter}
+          onTimeSlotFilterChange={setTimeSlotFilter}
+          timeSlots={allTimeSlots}
+        />
+        <DeliveryReportDialog timeSlots={allTimeSlots} />
+      </div>
 
       {!isWorkingDay ? (
         <div className="text-center py-16 text-muted-foreground">

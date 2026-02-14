@@ -1,1 +1,28 @@
 project_id = "infresxpaglulwiooanc"
+
+[functions.create-payment]
+verify_jwt = false
+
+[functions.check-pix-payment]
+verify_jwt = false
+
+[functions.pix-webhook]
+verify_jwt = false
+
+[functions.pix-automatic-webhook]
+verify_jwt = false
+
+[functions.stripe-webhook]
+verify_jwt = false
+
+[functions.api]
+verify_jwt = false
+
+[functions.validate-document]
+verify_jwt = false
+
+[functions.test-pix-connection]
+verify_jwt = false
+
+[functions.mcp-hub]
+verify_jwt = false

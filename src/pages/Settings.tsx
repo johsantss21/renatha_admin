@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Settings as SettingsIcon, Loader2, Save, Clock, Calendar, Package, Users, Zap, Trash2, Plus, Landmark, CreditCard, Webhook, FileText, Layers } from 'lucide-react';
+import { Settings as SettingsIcon, Loader2, Save, Clock, Calendar, Package, Users, Zap, Trash2, Plus, Landmark, CreditCard, Webhook, FileText, Layers, Network } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -27,6 +27,7 @@ import { StripeIntegrationSettings } from '@/components/settings/StripeIntegrati
 import { N8nIntegrationSettings } from '@/components/settings/N8nIntegrationSettings';
 import { SefazIntegrationSettings } from '@/components/settings/SefazIntegrationSettings';
 import { OtherIntegrationSettings } from '@/components/settings/OtherIntegrationSettings';
+import { McpIntegrationSettings } from '@/components/settings/McpIntegrationSettings';
 
 const weekdayOptions = [
   { value: 'domingo', label: 'Domingo' },
@@ -232,6 +233,10 @@ export default function Settings() {
             <TabsTrigger value="outras" className="gap-1.5">
               <Layers className="h-4 w-4" />
               Outras
+            </TabsTrigger>
+            <TabsTrigger value="mcp" className="gap-1.5">
+              <Network className="h-4 w-4" />
+              MCP
             </TabsTrigger>
           </TabsList>
 
@@ -477,6 +482,11 @@ export default function Settings() {
           {/* === OUTRAS === */}
           <TabsContent value="outras">
             <OtherIntegrationSettings />
+          </TabsContent>
+
+          {/* === MCP === */}
+          <TabsContent value="mcp">
+            <McpIntegrationSettings />
           </TabsContent>
         </Tabs>
       </div>
